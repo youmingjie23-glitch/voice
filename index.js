@@ -9,6 +9,8 @@ const {
   AudioPlayerStatus,
   NoSubscriberBehavior,
   getVoiceConnection,
+  entersState,
+  VoiceConnectionStatus,
 } = require("@discordjs/voice");
 const play = require("play-dl");
 
@@ -29,13 +31,11 @@ const guildState = new Map();
 
 async function initSoundCloud() {
   const clientID = await play.getFreeClientID();
-
   play.setToken({
     soundcloud: {
       client_id: clientID,
     },
   });
-
   console.log("✅ SoundCloud client_id loaded");
 }
 
@@ -114,9 +114,11 @@ async function handlePlay(message, args) {
       selfDeaf: true,
     });
 
+    await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+
     const player = createAudioPlayer({
       behaviors: {
-        noSubscriber: NoSubscriberBehavior.Stop,
+        noSubscriber: NoSubscriberBehavior.Pause,
       },
     });
 
@@ -126,14 +128,34 @@ async function handlePlay(message, args) {
       connection,
       player,
       textChannelId: message.channel.id,
+      idleTimer: null,
     };
 
-    player.on(AudioPlayerStatus.Idle, async () => {
-      const textChannel = await client.channels.fetch(state.textChannelId).catch(() => null);
-      if (textChannel && textChannel.isTextBased()) {
-        textChannel.send("⏹️ 播放結束，已離開語音頻道。").catch(() => {});
+    player.on(AudioPlayerStatus.Playing, () => {
+      console.log("▶ player status = Playing");
+      if (state.idleTimer) {
+        clearTimeout(state.idleTimer);
+        state.idleTimer = null;
       }
-      cleanupGuild(message.guild.id);
+    });
+
+    player.on(AudioPlayerStatus.Idle, async () => {
+      console.log("⏹ player status = Idle");
+
+      if (state.idleTimer) clearTimeout(state.idleTimer);
+
+      state.idleTimer = setTimeout(async () => {
+        const current = guildState.get(message.guild.id);
+        if (!current) return;
+
+        if (current.player.state.status === AudioPlayerStatus.Idle) {
+          const textChannel = await client.channels.fetch(current.textChannelId).catch(() => null);
+          if (textChannel && textChannel.isTextBased()) {
+            textChannel.send("⏹️ 播放結束，已離開語音頻道。").catch(() => {});
+          }
+          cleanupGuild(message.guild.id);
+        }
+      }, 3000);
     });
 
     player.on("error", async (error) => {
@@ -161,6 +183,9 @@ async function handlePlay(message, args) {
   play.attachListeners(state.player, stream);
 
   state.player.play(resource);
+
+  await entersState(state.player, AudioPlayerStatus.Playing, 20_000);
+
   message.channel.send(`▶️ 開始播放：**${trackTitle}**`);
 }
 
@@ -200,6 +225,11 @@ function handleHelp(message) {
 function cleanupGuild(guildId) {
   const state = guildState.get(guildId);
   if (!state) return;
+
+  if (state.idleTimer) {
+    clearTimeout(state.idleTimer);
+    state.idleTimer = null;
+  }
 
   try {
     state.player.stop();
