@@ -1,3 +1,116 @@
+require("dotenv").config();
+
+process.on("uncaughtException", (err) => {
+  console.error("UNCAUGHT EXCEPTION:", err);
+});
+
+process.on("unhandledRejection", (err) => {
+  console.error("UNHANDLED REJECTION:", err);
+});
+
+console.log("1. index.js started");
+
+const express = require("express");
+console.log("2. express loaded");
+
+const { Client, GatewayIntentBits } = require("discord.js");
+console.log("3. discord.js loaded");
+
+const {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  NoSubscriberBehavior,
+  getVoiceConnection,
+  entersState,
+  VoiceConnectionStatus,
+} = require("@discordjs/voice");
+console.log("4. voice loaded");
+
+const play = require("play-dl");
+console.log("5. play-dl loaded");
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const PREFIX = process.env.PREFIX || "?";
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
+  ],
+});
+
+const guildState = new Map();
+
+async function initSoundCloud() {
+  console.log("6. initSoundCloud start");
+  const clientID = await play.getFreeClientID();
+  console.log("7. got SoundCloud client id");
+
+  play.setToken({
+    soundcloud: {
+      client_id: clientID,
+    },
+  });
+
+  console.log("8. SoundCloud token set");
+}
+
+app.get("/", (req, res) => {
+  res.send("SoundCloud bot is running.");
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    botReady: client.isReady(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    time: new Date().toISOString(),
+  });
+});
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`9. Web server running on port ${PORT}`);
+});
+
+client.once("ready", async () => {
+  try {
+    console.log("10. Discord ready event");
+    await initSoundCloud();
+    console.log(`11. Logged in as ${client.user.tag}`);
+  } catch (err) {
+    console.error("SoundCloud init failed:", err);
+  }
+});
+
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+  if (!message.content.startsWith(PREFIX)) return;
+
+  const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
+  const command = (args.shift() || "").toLowerCase();
+
+  try {
+    if (command === "play") {
+      await handlePlay(message, args);
+    } else if (command === "stop") {
+      handleStop(message);
+    } else if (command === "leave") {
+      handleLeave(message);
+    } else if (command === "help") {
+      handleHelp(message);
+    }
+  } catch (error) {
+    console.error("Command error:", error);
+    const reason = error?.message ? `\n原因：${error.message}` : "";
+    message.reply(`❌ 執行指令時發生錯誤。${reason}`);
+  }
+});
+
 async function handlePlay(message, args) {
   const voiceChannel = message.member?.voice?.channel;
   if (!voiceChannel) {
@@ -24,7 +137,7 @@ async function handlePlay(message, args) {
     });
 
     try {
-      await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+      await entersState(connection, VoiceConnectionStatus.Ready, 30000);
     } catch (err) {
       console.error("Voice connection ready timeout:", err);
       try {
@@ -49,7 +162,7 @@ async function handlePlay(message, args) {
     };
 
     player.on(AudioPlayerStatus.Playing, () => {
-      console.log("▶ player status = Playing");
+      console.log("player status = Playing");
       if (state.idleTimer) {
         clearTimeout(state.idleTimer);
         state.idleTimer = null;
@@ -57,7 +170,7 @@ async function handlePlay(message, args) {
     });
 
     player.on(AudioPlayerStatus.Idle, async () => {
-      console.log("⏹ player status = Idle");
+      console.log("player status = Idle");
 
       if (state.idleTimer) clearTimeout(state.idleTimer);
 
@@ -100,6 +213,73 @@ async function handlePlay(message, args) {
   play.attachListeners(state.player, stream);
 
   state.player.play(resource);
-
   message.channel.send(`▶️ 開始播放：**${trackTitle}**`);
 }
+
+function handleStop(message) {
+  const state = guildState.get(message.guild.id);
+  if (!state) {
+    return message.reply("❌ 目前沒有播放中的音樂。");
+  }
+
+  state.player.stop(true);
+  cleanupGuild(message.guild.id);
+  message.channel.send("⏹️ 已停止播放。");
+}
+
+function handleLeave(message) {
+  const state = guildState.get(message.guild.id);
+  if (!state) {
+    return message.reply("❌ 我目前不在語音頻道。");
+  }
+
+  cleanupGuild(message.guild.id);
+  message.channel.send("👋 已離開語音頻道。");
+}
+
+function handleHelp(message) {
+  message.channel.send(
+    [
+      "可用指令：",
+      `\`${PREFIX}play SoundCloud連結\``,
+      `\`${PREFIX}stop\``,
+      `\`${PREFIX}leave\``,
+      `\`${PREFIX}help\``,
+    ].join("\\n")
+  );
+}
+
+function cleanupGuild(guildId) {
+  const state = guildState.get(guildId);
+  if (!state) return;
+
+  if (state.idleTimer) {
+    clearTimeout(state.idleTimer);
+    state.idleTimer = null;
+  }
+
+  try {
+    state.player.stop();
+  } catch (_) {}
+
+  try {
+    state.connection.destroy();
+  } catch (_) {}
+
+  const existing = getVoiceConnection(guildId);
+  if (existing) {
+    try {
+      existing.destroy();
+    } catch (_) {}
+  }
+
+  guildState.delete(guildId);
+}
+
+console.log("12. before client.login");
+
+client.login(process.env.DISCORD_TOKEN).then(() => {
+  console.log("13. login promise resolved");
+}).catch((err) => {
+  console.error("LOGIN FAILED:", err);
+});
