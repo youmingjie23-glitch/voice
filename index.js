@@ -20,7 +20,7 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const PREFIX = process.env.PREFIX || "!";
+const PREFIX = process.env.PREFIX || "?";
 
 const client = new Client({
   intents: [
@@ -74,16 +74,6 @@ function getYtDlpArgs() {
   }
 
   return args;
-}
-
-async function getVideoInfo(url) {
-  const args = {
-    ...getYtDlpArgs(),
-    dumpSingleJson: true,
-    skipDownload: true,
-  };
-
-  return await youtubedl(url, args);
 }
 
 async function getAudioUrl(url) {
@@ -141,7 +131,7 @@ function createAudioStream(url) {
 }
 
 app.get("/", (req, res) => {
-  res.send("Render YouTube cookies bot is running.");
+  res.send("YouTube audio bot is running.");
 });
 
 app.get("/health", (req, res) => {
@@ -228,7 +218,6 @@ async function handlePlay(message, args) {
       connection,
       player,
       textChannelId: message.channel.id,
-      currentTitle: null,
     };
 
     player.on(AudioPlayerStatus.Idle, async () => {
@@ -253,14 +242,6 @@ async function handlePlay(message, args) {
 
   state.textChannelId = message.channel.id;
 
-  let info = { title: "未知標題" };
-
-  try {
-    info = await getVideoInfo(input);
-  } catch (err) {
-    console.error("getVideoInfo failed:", err?.message || err);
-  }
-
   const streamUrl = await getAudioUrl(input);
 
   const transcoder = createAudioStream(streamUrl);
@@ -269,10 +250,8 @@ async function handlePlay(message, args) {
     inlineVolume: false,
   });
 
-  state.currentTitle = info.title || "未知標題";
   state.player.play(resource);
-
-  message.channel.send(`▶️ 開始播放：**${state.currentTitle}**`);
+  message.channel.send("▶️ 開始播放");
 }
 
 function handleStop(message) {
