@@ -5,7 +5,8 @@ const {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
-  AudioPlayerStatus
+  AudioPlayerStatus,
+  NoSubscriberBehavior
 } = require("@discordjs/voice");
 
 const play = require("play-dl");
@@ -19,88 +20,90 @@ const client = new Client({
   ],
 });
 
-const PREFIX = "!";
-
-let queue = [];
-let player;
+let player = null;
+let connection = null;
 
 client.once("ready", () => {
-  console.log(`✅ 已登入 ${client.user.tag}`);
+  console.log(`✅ Bot ready: ${client.user.tag}`);
 });
 
 client.on("messageCreate", async (msg) => {
   if (msg.author.bot) return;
-  if (!msg.content.startsWith(PREFIX)) return;
 
-  const args = msg.content.slice(1).split(" ");
-  const cmd = args.shift();
-
-  if (cmd === "play") {
+  if (msg.content.startsWith("!play")) {
     const vc = msg.member.voice.channel;
     if (!vc) return msg.reply("❌ 先進語音頻道");
 
-    const query = args.join(" ");
+    const url = msg.content.split(" ")[1];
+    if (!url) return msg.reply("❌ 請貼 YouTube 連結");
 
-    let url;
+    try {
+      // 建立連線（如果沒有）
+      if (!connection) {
+        connection = joinVoiceChannel({
+          channelId: vc.id,
+          guildId: msg.guild.id,
+          adapterCreator: msg.guild.voiceAdapterCreator,
+          selfDeaf: true
+        });
+      }
 
-    if (play.yt_validate(query) === "video" || query.includes("youtu")) {
-      url = query;
-    } else {
-      const r = await play.search(query, { limit: 1 });
-      if (!r.length) return msg.reply("❌ 找不到");
-      url = r[0].url;
+      // 建立播放器（低RAM模式）
+      if (!player) {
+        player = createAudioPlayer({
+          behaviors: {
+            noSubscriber: NoSubscriberBehavior.Stop,
+          },
+        });
+
+        connection.subscribe(player);
+      }
+
+      // 取得音訊（低負載）
+      const stream = await play.stream(url, {
+        discordPlayerCompatibility: true
+      });
+
+      const resource = createAudioResource(stream.stream, {
+        inputType: stream.type,
+        inlineVolume: false // 關閉音量控制（省RAM）
+      });
+
+      player.play(resource);
+
+      msg.channel.send("▶️ 播放中");
+
+      // 播完直接清掉
+      player.once(AudioPlayerStatus.Idle, () => {
+        msg.channel.send("⏹️ 播放結束");
+
+        if (connection) {
+          connection.destroy();
+          connection = null;
+        }
+
+        player = null;
+      });
+
+    } catch (err) {
+      console.error(err);
+      msg.reply("❌ 播放失敗");
+    }
+  }
+
+  if (msg.content === "!stop") {
+    if (player) {
+      player.stop();
+      msg.channel.send("⏹️ 已停止");
     }
 
-    queue.push(url);
-    msg.channel.send("🎵 已加入播放清單");
+    if (connection) {
+      connection.destroy();
+      connection = null;
+    }
 
-    if (!player) start(msg, vc);
-  }
-
-  if (cmd === "skip") {
-    player.stop();
-    msg.channel.send("⏭️ 已跳過");
-  }
-
-  if (cmd === "stop") {
-    queue = [];
-    player.stop();
-    msg.channel.send("⏹️ 已停止");
+    player = null;
   }
 });
-
-async function start(msg, vc) {
-  const connection = joinVoiceChannel({
-    channelId: vc.id,
-    guildId: msg.guild.id,
-    adapterCreator: msg.guild.voiceAdapterCreator,
-  });
-
-  player = createAudioPlayer();
-  connection.subscribe(player);
-
-  playNext(msg);
-
-  player.on(AudioPlayerStatus.Idle, () => {
-    playNext(msg);
-  });
-}
-
-async function playNext(msg) {
-  if (queue.length === 0) {
-    player = null;
-    return;
-  }
-
-  const url = queue.shift();
-
-  const stream = await play.stream(url);
-  const resource = createAudioResource(stream.stream, {
-    inputType: stream.type,
-  });
-
-  player.play(resource);
-  msg.channel.send(`▶️ 播放中: ${url}`);
-}
 
 client.login(process.env.TOKEN);
