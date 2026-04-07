@@ -76,38 +76,67 @@ function getYtDlpArgs() {
   return args;
 }
 
-async function getAudioUrl(url) {
-  const formatCandidates = [
-    "bestaudio",
-    "bestaudio/best",
-    "best[acodec!=none]/best",
-    "best",
-  ];
+function normalizeYouTubeUrl(input) {
+  try {
+    const u = new URL(input);
 
-  for (const fmt of formatCandidates) {
-    try {
-      const args = {
-        ...getYtDlpArgs(),
-        getUrl: true,
-        format: fmt,
-      };
-
-      const output = await youtubedl(url, args);
-      const lines = String(output)
-        .split(/\r?\n/)
-        .map(v => v.trim())
-        .filter(Boolean);
-
-      if (lines.length) {
-        console.log(`Using format: ${fmt}`);
-        return lines[0];
-      }
-    } catch (err) {
-      console.error(`getAudioUrl failed with format ${fmt}:`, err?.message || err);
+    if (u.hostname.includes("youtu.be")) {
+      const videoId = u.pathname.replace("/", "").trim();
+      if (!videoId) return null;
+      return `https://www.youtube.com/watch?v=${videoId}`;
     }
+
+    if (u.hostname.includes("youtube.com")) {
+      const videoId = u.searchParams.get("v");
+      if (!videoId) return null;
+      return `https://www.youtube.com/watch?v=${videoId}`;
+    }
+
+    return null;
+  } catch (err) {
+    return null;
+  }
+}
+
+async function getAudioUrl(url) {
+  const args = {
+    ...getYtDlpArgs(),
+    dumpSingleJson: true,
+    skipDownload: true,
+  };
+
+  const info = await youtubedl(url, args);
+
+  if (!info || !Array.isArray(info.formats)) {
+    throw new Error("無法取得影片格式資訊");
   }
 
-  throw new Error("找不到可播放的影片/音訊格式");
+  const playableFormats = info.formats.filter((f) => {
+    const hasUrl = !!f.url;
+    const hasAudio = f.acodec && f.acodec !== "none";
+    return hasUrl && hasAudio;
+  });
+
+  if (!playableFormats.length) {
+    throw new Error("這支影片沒有可用的音訊格式");
+  }
+
+  playableFormats.sort((a, b) => {
+    const abrA = a.abr || 0;
+    const abrB = b.abr || 0;
+    return abrB - abrA;
+  });
+
+  const selected = playableFormats[0];
+
+  console.log("Selected format:", {
+    format_id: selected.format_id,
+    ext: selected.ext,
+    acodec: selected.acodec,
+    abr: selected.abr,
+  });
+
+  return selected.url;
 }
 
 function createAudioStream(url) {
@@ -183,14 +212,16 @@ async function handlePlay(message, args) {
     return message.reply("❌ 你要先進入語音頻道。");
   }
 
-  const input = args[0];
+  let input = args[0];
   if (!input) {
     return message.reply(`❌ 請輸入 ${PREFIX}play YouTube連結`);
   }
 
-  if (!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(input)) {
-    return message.reply("❌ 這版只支援 YouTube 連結。");
+  const normalizedUrl = normalizeYouTubeUrl(input);
+  if (!normalizedUrl) {
+    return message.reply("❌ 這版只支援正確的 YouTube 連結。");
   }
+  input = normalizedUrl;
 
   if (!ensureCookiesFile()) {
     return message.reply("❌ 尚未設定 YouTube cookies。請先在 Render 加入 YTDLP_COOKIES_B64。");
