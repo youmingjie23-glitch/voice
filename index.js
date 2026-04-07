@@ -37,7 +37,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`Web server running on port ${PORT}`);
 });
 
-client.once("ready", () => {
+client.once("clientReady", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
@@ -55,6 +55,8 @@ client.on("messageCreate", async (message) => {
       handleStop(message);
     } else if (command === "leave") {
       handleLeave(message);
+    } else if (command === "help") {
+      handleHelp(message);
     }
   } catch (error) {
     console.error("Command error:", error);
@@ -83,11 +85,15 @@ async function handlePlay(message, args) {
       selfDeaf: true,
     });
 
+    connection.on("stateChange", (oldState, newState) => {
+      console.log(`Voice state: ${oldState.status} -> ${newState.status}`);
+    });
+
     try {
-      await entersState(connection, VoiceConnectionStatus.Ready, 30000);
+      await entersState(connection, VoiceConnectionStatus.Ready, 60000);
     } catch (err) {
-      connection.destroy();
-      return message.reply("❌ 語音連線失敗");
+      console.error("Voice connection failed:", err);
+      return message.reply("❌ 語音連線失敗，可能是頻道權限或 Render 語音連線不穩。");
     }
 
     const player = createAudioPlayer({
@@ -103,8 +109,12 @@ async function handlePlay(message, args) {
       player,
     };
 
+    player.on(AudioPlayerStatus.Playing, () => {
+      console.log("▶ 播放中");
+    });
+
     player.on(AudioPlayerStatus.Idle, () => {
-      console.log("播放結束");
+      console.log("⏹ 播放結束");
     });
 
     player.on("error", (err) => {
@@ -114,7 +124,6 @@ async function handlePlay(message, args) {
     guildState.set(message.guild.id, state);
   }
 
-  // 🔥 核心：直接 stream（不用 token）
   const stream = await play.stream(url);
 
   const resource = createAudioResource(stream.stream, {
@@ -128,7 +137,9 @@ async function handlePlay(message, args) {
 
 function handleStop(message) {
   const state = guildState.get(message.guild.id);
-  if (!state) return;
+  if (!state) {
+    return message.reply("❌ 目前沒有播放中的音樂");
+  }
 
   state.player.stop();
   message.reply("⏹️ 停止");
@@ -136,10 +147,24 @@ function handleStop(message) {
 
 function handleLeave(message) {
   const state = guildState.get(message.guild.id);
-  if (!state) return;
+  if (!state) {
+    return message.reply("❌ 目前不在語音頻道");
+  }
 
   cleanupGuild(message.guild.id);
   message.reply("👋 離開");
+}
+
+function handleHelp(message) {
+  message.reply(
+    [
+      "可用指令：",
+      `\`${PREFIX}play SoundCloud連結\``,
+      `\`${PREFIX}stop\``,
+      `\`${PREFIX}leave\``,
+      `\`${PREFIX}help\``,
+    ].join("\n")
+  );
 }
 
 function cleanupGuild(guildId) {
