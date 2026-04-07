@@ -32,7 +32,6 @@ const client = new Client({
 });
 
 const guildState = new Map();
-
 let cookiesFilePath = process.env.YTDLP_COOKIES_FILE || null;
 
 function ensureCookiesFile() {
@@ -61,7 +60,7 @@ function getYtDlpArgs() {
     noWarnings: true,
     addHeader: [
       "referer:youtube.com",
-      "user-agent:Mozilla/5.0"
+      "user-agent:Mozilla/5.0",
     ],
   };
 
@@ -78,33 +77,20 @@ function getYtDlpArgs() {
 }
 
 async function getVideoInfo(url) {
-  const formatCandidates = [
-    "best",
-    "bestvideo+bestaudio/best",
-  ];
+  const args = {
+    ...getYtDlpArgs(),
+    dumpSingleJson: true,
+    skipDownload: true,
+  };
 
-  for (const fmt of formatCandidates) {
-    try {
-      const args = {
-        ...getYtDlpArgs(),
-        dumpSingleJson: true,
-        skipDownload: true,
-        format: fmt,
-      };
-
-      return await youtubedl(url, args);
-    } catch (err) {
-      console.error(`getVideoInfo failed with format ${fmt}:`, err?.message || err);
-    }
-  }
-
-  throw new Error("無法取得影片資訊");
+  return await youtubedl(url, args);
 }
 
 async function getAudioUrl(url) {
   const formatCandidates = [
-    "best[acodec!=none]/best",
+    "bestaudio",
     "bestaudio/best",
+    "best[acodec!=none]/best",
     "best",
   ];
 
@@ -123,6 +109,7 @@ async function getAudioUrl(url) {
         .filter(Boolean);
 
       if (lines.length) {
+        console.log(`Using format: ${fmt}`);
         return lines[0];
       }
     } catch (err) {
@@ -266,7 +253,14 @@ async function handlePlay(message, args) {
 
   state.textChannelId = message.channel.id;
 
-  const info = await getVideoInfo(input);
+  let info = { title: "未知標題" };
+
+  try {
+    info = await getVideoInfo(input);
+  } catch (err) {
+    console.error("getVideoInfo failed:", err?.message || err);
+  }
+
   const streamUrl = await getAudioUrl(input);
 
   const transcoder = createAudioStream(streamUrl);
@@ -318,12 +312,19 @@ function cleanupGuild(guildId) {
   const state = guildState.get(guildId);
   if (!state) return;
 
-  try { state.player.stop(); } catch (_) {}
-  try { state.connection.destroy(); } catch (_) {}
+  try {
+    state.player.stop();
+  } catch (_) {}
+
+  try {
+    state.connection.destroy();
+  } catch (_) {}
 
   const existing = getVoiceConnection(guildId);
   if (existing) {
-    try { existing.destroy(); } catch (_) {}
+    try {
+      existing.destroy();
+    } catch (_) {}
   }
 
   guildState.delete(guildId);
