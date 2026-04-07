@@ -104,15 +104,6 @@ async function handlePlay(message, args) {
     return message.reply("❌ 目前這版只支援 SoundCloud 連結。");
   }
 
-  let trackTitle = "未知曲目";
-
-  try {
-    const info = await play.soundcloud(query);
-    trackTitle = info?.name || trackTitle;
-  } catch (err) {
-    console.error("SoundCloud URL info error:", err);
-  }
-
   let state = guildState.get(message.guild.id);
 
   if (!state) {
@@ -159,10 +150,15 @@ async function handlePlay(message, args) {
 
   state.textChannelId = message.channel.id;
 
-  const stream = await play.stream(query);
+  const soundInfo = await play.soundcloud(query);
+  const trackTitle = soundInfo?.name || "未知曲目";
+
+  const stream = await play.stream_from_info(soundInfo);
   const resource = createAudioResource(stream.stream, {
     inputType: stream.type,
   });
+
+  play.attachListeners(state.player, stream);
 
   state.player.play(resource);
   message.channel.send(`▶️ 開始播放：**${trackTitle}**`);
