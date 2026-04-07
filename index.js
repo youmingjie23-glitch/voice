@@ -27,6 +27,18 @@ const client = new Client({
 
 const guildState = new Map();
 
+async function initSoundCloud() {
+  const clientID = await play.getFreeClientID();
+
+  play.setToken({
+    soundcloud: {
+      client_id: clientID,
+    },
+  });
+
+  console.log("✅ SoundCloud client_id loaded");
+}
+
 app.get("/", (req, res) => {
   res.send("SoundCloud bot is running.");
 });
@@ -45,7 +57,12 @@ app.listen(PORT, () => {
 });
 
 client.once("ready", async () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
+  try {
+    await initSoundCloud();
+    console.log(`✅ Logged in as ${client.user.tag}`);
+  } catch (err) {
+    console.error("❌ SoundCloud init failed:", err);
+  }
 });
 
 client.on("messageCreate", async (message) => {
@@ -80,33 +97,20 @@ async function handlePlay(message, args) {
 
   const query = args.join(" ").trim();
   if (!query) {
-    return message.reply(`❌ 請輸入 ${PREFIX}play SoundCloud連結 或 ${PREFIX}play 歌名`);
+    return message.reply(`❌ 請輸入 ${PREFIX}play SoundCloud連結`);
   }
 
-  let trackUrl = null;
+  if (!/^https?:\/\/(www\.)?soundcloud\.com\//i.test(query)) {
+    return message.reply("❌ 目前這版只支援 SoundCloud 連結。");
+  }
+
   let trackTitle = "未知曲目";
 
-  if (/^https?:\/\/(www\.)?soundcloud\.com\//i.test(query)) {
-    trackUrl = query;
-
-    try {
-      const info = await play.soundcloud(trackUrl);
-      trackTitle = info?.name || trackTitle;
-    } catch (err) {
-      console.error("SoundCloud URL info error:", err);
-    }
-  } else {
-    const results = await play.search(query, {
-      source: { soundcloud: "tracks" },
-      limit: 1,
-    });
-
-    if (!results || !results.length) {
-      return message.reply("❌ 找不到這首 SoundCloud 音樂。");
-    }
-
-    trackUrl = results[0].url;
-    trackTitle = results[0].name || results[0].title || trackTitle;
+  try {
+    const info = await play.soundcloud(query);
+    trackTitle = info?.name || trackTitle;
+  } catch (err) {
+    console.error("SoundCloud URL info error:", err);
   }
 
   let state = guildState.get(message.guild.id);
@@ -145,7 +149,7 @@ async function handlePlay(message, args) {
       console.error("Player error:", error);
       const textChannel = await client.channels.fetch(state.textChannelId).catch(() => null);
       if (textChannel && textChannel.isTextBased()) {
-        textChannel.send("❌ 播放失敗，請換另一首 SoundCloud。").catch(() => {});
+        textChannel.send("❌ 播放失敗，請換另一個 SoundCloud 連結。").catch(() => {});
       }
       cleanupGuild(message.guild.id);
     });
@@ -155,7 +159,7 @@ async function handlePlay(message, args) {
 
   state.textChannelId = message.channel.id;
 
-  const stream = await play.stream(trackUrl);
+  const stream = await play.stream(query);
   const resource = createAudioResource(stream.stream, {
     inputType: stream.type,
   });
@@ -190,7 +194,6 @@ function handleHelp(message) {
     [
       "可用指令：",
       `\`${PREFIX}play SoundCloud連結\``,
-      `\`${PREFIX}play 歌名\``,
       `\`${PREFIX}stop\``,
       `\`${PREFIX}leave\``,
       `\`${PREFIX}help\``,
@@ -202,12 +205,19 @@ function cleanupGuild(guildId) {
   const state = guildState.get(guildId);
   if (!state) return;
 
-  try { state.player.stop(); } catch {}
-  try { state.connection.destroy(); } catch {}
+  try {
+    state.player.stop();
+  } catch (_) {}
+
+  try {
+    state.connection.destroy();
+  } catch (_) {}
 
   const existing = getVoiceConnection(guildId);
   if (existing) {
-    try { existing.destroy(); } catch {}
+    try {
+      existing.destroy();
+    } catch (_) {}
   }
 
   guildState.delete(guildId);
