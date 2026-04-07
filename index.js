@@ -43,18 +43,22 @@ function ensureCookiesFile() {
   const b64 = process.env.YTDLP_COOKIES_B64;
   if (!b64) return null;
 
-  const decoded = Buffer.from(b64, "base64").toString("utf8");
-  const tempPath = path.join(os.tmpdir(), "youtube-cookies.txt");
-  fs.writeFileSync(tempPath, decoded, "utf8");
-  cookiesFilePath = tempPath;
-  return cookiesFilePath;
+  try {
+    const decoded = Buffer.from(b64, "base64").toString("utf8");
+    const tempPath = path.join(os.tmpdir(), "youtube-cookies.txt");
+    fs.writeFileSync(tempPath, decoded, "utf8");
+    cookiesFilePath = tempPath;
+    return cookiesFilePath;
+  } catch (err) {
+    console.error("Failed to decode cookies:", err);
+    return null;
+  }
 }
 
 function getYtDlpArgs() {
   const args = {
     noPlaylist: true,
     noWarnings: true,
-    preferFreeFormats: true,
     addHeader: [
       "referer:youtube.com",
       "user-agent:Mozilla/5.0"
@@ -74,34 +78,59 @@ function getYtDlpArgs() {
 }
 
 async function getVideoInfo(url) {
-  const args = {
-    ...getYtDlpArgs(),
-    dumpSingleJson: true,
-    skipDownload: true,
-    format: "bestaudio/best",
-  };
+  const formatCandidates = [
+    "best",
+    "bestvideo+bestaudio/best",
+  ];
 
-  return youtubedl(url, args);
+  for (const fmt of formatCandidates) {
+    try {
+      const args = {
+        ...getYtDlpArgs(),
+        dumpSingleJson: true,
+        skipDownload: true,
+        format: fmt,
+      };
+
+      return await youtubedl(url, args);
+    } catch (err) {
+      console.error(`getVideoInfo failed with format ${fmt}:`, err?.message || err);
+    }
+  }
+
+  throw new Error("無法取得影片資訊");
 }
 
 async function getAudioUrl(url) {
-  const args = {
-    ...getYtDlpArgs(),
-    getUrl: true,
-    format: "bestaudio[acodec!=none]/bestaudio/best",
-  };
+  const formatCandidates = [
+    "best[acodec!=none]/best",
+    "bestaudio/best",
+    "best",
+  ];
 
-  const output = await youtubedl(url, args);
-  const lines = String(output)
-    .split(/\r?\n/)
-    .map(v => v.trim())
-    .filter(Boolean);
+  for (const fmt of formatCandidates) {
+    try {
+      const args = {
+        ...getYtDlpArgs(),
+        getUrl: true,
+        format: fmt,
+      };
 
-  if (!lines.length) {
-    throw new Error("yt-dlp 沒有回傳可播放網址");
+      const output = await youtubedl(url, args);
+      const lines = String(output)
+        .split(/\r?\n/)
+        .map(v => v.trim())
+        .filter(Boolean);
+
+      if (lines.length) {
+        return lines[0];
+      }
+    } catch (err) {
+      console.error(`getAudioUrl failed with format ${fmt}:`, err?.message || err);
+    }
   }
 
-  return lines[0];
+  throw new Error("找不到可播放的影片/音訊格式");
 }
 
 function createAudioStream(url) {
