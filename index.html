@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>政壇哈哈鏡｜政治人物分享交流平台</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="nav-wrap">
+      <button class="logo" onclick="navigate('home')">
+        <span class="logo-icon">🎭</span>
+        <span>政壇哈哈鏡</span>
+      </button>
+      <nav class="nav-links">
+        <button onclick="setSection('forum')">論壇區</button>
+        <button onclick="setSection('image')">圖片區</button>
+        <button onclick="requireLogin(() => navigate('create'))">我要開麥</button>
+        <button onclick="requireLogin(() => navigate('profile'))">個人首頁</button>
+      </nav>
+      <div id="authArea" class="auth-area"></div>
+    </div>
+  </header>
+
+  <main id="app" class="container"></main>
+
+  <div id="loginModal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" onclick="closeLoginModal()">×</button>
+      <h2>想開麥？請先登入！</h2>
+      <p>目前你是政壇觀眾席，只能看不能發言。登入後才能按讚、留言、發布貼文。</p>
+      <div class="modal-actions">
+        <button class="primary-btn" onclick="closeLoginModal(); navigate('login')">登入</button>
+        <button class="secondary-btn" onclick="closeLoginModal(); navigate('register')">註冊</button>
+        <button class="ghost-btn" onclick="closeLoginModal()">先繼續旁觀</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="twoFactorModal" class="modal hidden">
+    <div class="modal-card two-factor-card">
+      <button class="modal-close" onclick="cancelTwoFactor()">×</button>
+      <h2 id="twoFactorTitle">雙重認證</h2>
+      <p id="twoFactorHint" class="help-text">請完成兩次圖片驗證，確認你不是政壇機器人。</p>
+      <div id="twoFactorGrid" class="verify-grid"></div>
+      <div class="modal-actions verify-actions">
+        <button class="ghost-btn" onclick="cancelTwoFactor()">取消</button>
+        <button class="primary-btn" onclick="verifyTwoFactor()">驗證</button>
+      </div>
+      <p class="verify-note">需連續完成兩次驗證；每次正確答案可能不只一張。圖片引用來源為公開網路資源，僅作為課程作業展示使用。</p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
